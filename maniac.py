@@ -26,7 +26,21 @@ def run_bot():
     volume_levels = {"low": 0.25, "mid": 0.5, "max": 1.0}
     current_volume = 0.25
 
-    yt_dl_options = {"format": "bestaudio/best", "noplaylist": True}
+    # --- CONFIGURACIÓN DE YT-DLP PARA EVITAR BLOQUEOS ---
+    yt_dl_options = {
+        "format": "bestaudio/best",
+        "noplaylist": True,
+        "quiet": True,
+        "no_warnings": True,
+        "nocheckcertificate": True,
+        "ignoreerrors": False,
+        "logtostderr": False,
+        "no_color": True,
+        "extract_flat": False,
+        "wait_for_video": (5, 30),
+        # Este User-Agent simula un navegador real para evitar el error de "Sign in to confirm you're not a bot"
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
     ytdl = yt_dlp.YoutubeDL(yt_dl_options)
 
     def get_ffmpeg_options(volume):
@@ -42,6 +56,7 @@ def run_bot():
         url = queues[guild_id].pop(0)
 
         try:
+            # Ejecutamos la extracción en un hilo separado para no bloquear el bot
             data = await asyncio.get_event_loop().run_in_executor(
                 None, lambda: ytdl.extract_info(url, download=False)
             )
@@ -83,11 +98,9 @@ def run_bot():
     async def on_message(message):
         nonlocal current_volume
 
-        # Ignorar mensajes del propio bot
         if message.author == client.user:
             return
 
-        # Ignorar mensajes que no vengan de un servidor
         if not message.guild:
             return
 
@@ -113,6 +126,7 @@ def run_bot():
                 if "youtube.com" in query or "youtu.be" in query:
                     url = query
                 else:
+                    # Búsqueda directa en YouTube
                     search_data = await asyncio.get_event_loop().run_in_executor(
                         None, lambda: ytdl.extract_info(f"ytsearch:{query}", download=False)
                     )
@@ -127,6 +141,7 @@ def run_bot():
 
             except Exception as e:
                 print(f"Error en ?p: {e}")
+                await message.channel.send("❌ Hubo un error al buscar la canción. YouTube podría estar bloqueando la petición.")
 
         # 🔊 JOIN
         elif content.startswith("?join"):
@@ -156,21 +171,25 @@ def run_bot():
 
         # ⏸️ PAUSE / RESUME / STOP / SKIP
         elif content.startswith("?pa"):
-            voice_clients[guild_id].pause()
-            await message.add_reaction("⏸️")
+            if guild_id in voice_clients:
+                voice_clients[guild_id].pause()
+                await message.add_reaction("⏸️")
 
         elif content.startswith("?r"):
-            voice_clients[guild_id].resume()
-            await message.add_reaction("▶️")
+            if guild_id in voice_clients:
+                voice_clients[guild_id].resume()
+                await message.add_reaction("▶️")
 
         elif content.startswith("?f"):
-            queues[guild_id] = []
-            voice_clients[guild_id].stop()
-            await voice_clients[guild_id].disconnect()
-            await message.add_reaction("⏹️")
+            if guild_id in voice_clients:
+                queues[guild_id] = []
+                voice_clients[guild_id].stop()
+                await voice_clients[guild_id].disconnect()
+                await message.add_reaction("⏹️")
 
         elif content.startswith("?s"):
-            voice_clients[guild_id].stop()
-            await message.add_reaction("⏭️")
+            if guild_id in voice_clients:
+                voice_clients[guild_id].stop()
+                await message.add_reaction("⏭️")
 
     client.run(TOKEN)
