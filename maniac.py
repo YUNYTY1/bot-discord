@@ -22,7 +22,7 @@ def run_bot():
     history = {}
     current_volume = 0.25
 
-    # --- CONFIGURACIÓN DE YT-DLP ---
+    # --- CONFIGURACIÓN DE YT-DLP ACTUALIZADA ---
     yt_dl_options = {
         "format": "bestaudio/best",
         "noplaylist": True,
@@ -31,6 +31,12 @@ def run_bot():
         "nocheckcertificate": True,
         "ignoreerrors": False,
         "extract_flat": False,
+        # Post-procesador para forzar solo audio y reducir carga
+        "postprocessors": [{
+            "key": "FFmpegExtractAudio",
+            "preferredcodec": "mp3",
+            "preferredquality": "192",
+        }],
         "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
     ytdl = yt_dlp.YoutubeDL(yt_dl_options)
@@ -48,13 +54,11 @@ def run_bot():
         url = queues[guild_id].pop(0)
 
         try:
-            # Extracción con manejo de errores para evitar 'NoneType'
             data = await asyncio.get_event_loop().run_in_executor(
                 None, lambda: ytdl.extract_info(url, download=False)
             )
 
             if data is None:
-                print(f"Error: No se pudo obtener datos de la URL: {url}")
                 return await play_next(guild_id)
 
             if 'entries' in data:
@@ -66,6 +70,7 @@ def run_bot():
                 history[guild_id] = []
             history[guild_id].append(url)
 
+            # Usamos executable="ffmpeg" explícitamente para Railway
             player = discord.FFmpegPCMAudio(
                 song_url, 
                 executable="ffmpeg", 
@@ -103,7 +108,7 @@ def run_bot():
         guild_id = message.guild.id
         content = message.content.lower().strip()
 
-        # ▶️ COMANDO PLAY REFORZADO
+        # ▶️ COMANDO PLAY
         if content.startswith("?p "):
             try:
                 if not message.author.voice:
@@ -112,27 +117,23 @@ def run_bot():
 
                 query = message.content[3:].strip()
                 
-                # Conectar si no está conectado
                 if guild_id not in voice_clients or not voice_clients[guild_id].is_connected():
                     voice_clients[guild_id] = await message.author.voice.channel.connect()
 
-                # Mostrar que el bot está "pensando"
                 async with message.channel.typing():
-                    # Decidir si es búsqueda o link
                     search_query = query if "http" in query else f"ytsearch:{query}"
                     
                     search_data = await asyncio.get_event_loop().run_in_executor(
                         None, lambda: ytdl.extract_info(search_query, download=False)
                     )
 
-                    # Validación anti-NoneType
                     if search_data is None:
-                        await message.channel.send("❌ YouTube no devolvió resultados. Prueba con un link directo.")
+                        await message.channel.send("❌ YouTube bloqueó la petición. Intenta con link directo.")
                         return
 
                     if 'entries' in search_data:
                         if len(search_data['entries']) == 0:
-                            await message.channel.send("❌ No encontré resultados para tu búsqueda.")
+                            await message.channel.send("❌ No hubo resultados.")
                             return
                         video_url = search_data['entries'][0]['webpage_url']
                     else:
@@ -151,9 +152,9 @@ def run_bot():
 
             except Exception as e:
                 print(f"Error en ?p: {e}")
-                await message.channel.send(f"⚠️ Error al procesar: {str(e)[:100]}")
+                await message.channel.send(f"⚠️ Error: {str(e)[:50]}")
 
-        # 🔊 JOIN / LEAVE / CONTROLES
+        # 🔊 OTROS COMANDOS
         elif content == "?join":
             if message.author.voice:
                 voice_clients[guild_id] = await message.author.voice.channel.connect()
