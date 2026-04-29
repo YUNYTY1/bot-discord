@@ -9,7 +9,6 @@ def run_bot():
     load_dotenv()
     TOKEN = os.getenv('discord_token')
 
-    # --- CONFIGURACIÓN DE INTENTS ---
     intents = discord.Intents.default()
     intents.message_content = True
     intents.voice_states = True
@@ -22,7 +21,7 @@ def run_bot():
     history = {}
     current_volume = 0.25
 
-    # --- CONFIGURACIÓN DE YT-DLP ACTUALIZADA ---
+    # --- CONFIGURACIÓN OPTIMIZADA ---
     yt_dl_options = {
         "format": "bestaudio/best",
         "noplaylist": True,
@@ -31,11 +30,11 @@ def run_bot():
         "nocheckcertificate": True,
         "ignoreerrors": False,
         "extract_flat": False,
-        # Post-procesador para forzar solo audio y reducir carga
+        # Reducimos la calidad a 128k para ahorrar RAM en Railway
         "postprocessors": [{
             "key": "FFmpegExtractAudio",
             "preferredcodec": "mp3",
-            "preferredquality": "192",
+            "preferredquality": "128",
         }],
         "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
@@ -43,8 +42,10 @@ def run_bot():
 
     def get_ffmpeg_options(volume):
         return {
-            'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
-            'options': f'-vn -filter:a "volume={volume}" -dn -sn -ignore_unknown'
+            # Reducimos los tiempos de reconexión para no saturar el proceso
+            'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 2',
+            # Forzamos audio mono y una tasa de bits menor para bajar el uso de CPU al 50%
+            'options': f'-vn -ac 1 -ar 44100 -b:a 96k -filter:a "volume={volume}"'
         }
 
     async def play_next(guild_id):
@@ -70,7 +71,7 @@ def run_bot():
                 history[guild_id] = []
             history[guild_id].append(url)
 
-            # Usamos executable="ffmpeg" explícitamente para Railway
+            # Usamos el ejecutable del sistema para mayor estabilidad
             player = discord.FFmpegPCMAudio(
                 song_url, 
                 executable="ffmpeg", 
@@ -108,7 +109,6 @@ def run_bot():
         guild_id = message.guild.id
         content = message.content.lower().strip()
 
-        # ▶️ COMANDO PLAY
         if content.startswith("?p "):
             try:
                 if not message.author.voice:
@@ -128,11 +128,11 @@ def run_bot():
                     )
 
                     if search_data is None:
-                        await message.channel.send("❌ YouTube bloqueó la petición. Intenta con link directo.")
+                        await message.channel.send("❌ Error de YouTube. Intenta con link directo.")
                         return
 
                     if 'entries' in search_data:
-                        if len(search_data['entries']) == 0:
+                        if not search_data['entries']:
                             await message.channel.send("❌ No hubo resultados.")
                             return
                         video_url = search_data['entries'][0]['webpage_url']
@@ -154,7 +154,6 @@ def run_bot():
                 print(f"Error en ?p: {e}")
                 await message.channel.send(f"⚠️ Error: {str(e)[:50]}")
 
-        # 🔊 OTROS COMANDOS
         elif content == "?join":
             if message.author.voice:
                 voice_clients[guild_id] = await message.author.voice.channel.connect()
