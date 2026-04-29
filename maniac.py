@@ -2,14 +2,21 @@ import discord
 import os
 import asyncio
 import yt_dlp
+from discord.ext import commands
 from dotenv import load_dotenv
 
 def run_bot():
     load_dotenv()
+    # Usamos el nombre exacto de la variable que tienes en Railway
     TOKEN = os.getenv('discord_token')
 
+    # --- CONFIGURACIÓN DE INTENTS (CRUCIAL) ---
     intents = discord.Intents.default()
-    intents.message_content = True
+    intents.message_content = True  # Permite leer el contenido de los mensajes (?p, ?join, etc.)
+    intents.voice_states = True     # Permite gestionar la conexión a canales de voz
+    intents.guilds = True           # Permite interactuar con los servidores
+
+    # Usamos discord.Client con los intents configurados
     client = discord.Client(intents=intents)
 
     queues = {}
@@ -19,7 +26,7 @@ def run_bot():
     volume_levels = {"low": 0.25, "mid": 0.5, "max": 1.0}
     current_volume = 0.25
 
-    yt_dl_options = {"format": "bestaudio/best"}
+    yt_dl_options = {"format": "bestaudio/best", "noplaylist": True}
     ytdl = yt_dlp.YoutubeDL(yt_dl_options)
 
     def get_ffmpeg_options(volume):
@@ -43,8 +50,7 @@ def run_bot():
                 data = data['entries'][0]
 
             song = data['url']
-            title = data.get('title', 'Unknown Title')
-
+            
             if guild_id not in history:
                 history[guild_id] = []
             history[guild_id].append(url)
@@ -68,22 +74,28 @@ def run_bot():
 
     @client.event
     async def on_ready():
+        print(f'---')
         print(f'{client.user} is now jamming 🎶')
+        print(f'Intents message_content: {intents.message_content}')
+        print(f'---')
 
     @client.event
     async def on_message(message):
         nonlocal current_volume
 
+        # Ignorar mensajes del propio bot
         if message.author == client.user:
             return
 
+        # Ignorar mensajes que no vengan de un servidor
         if not message.guild:
             return
 
         guild_id = message.guild.id
+        content = message.content.lower().strip()
 
         # ▶️ PLAY
-        if message.content.startswith("?p "):
+        if content.startswith("?p "):
             try:
                 if guild_id not in queues:
                     queues[guild_id] = []
@@ -117,105 +129,48 @@ def run_bot():
                 print(f"Error en ?p: {e}")
 
         # 🔊 JOIN
-        elif message.content.startswith("?join"):
+        elif content.startswith("?join"):
             try:
                 if not message.author.voice:
                     await message.channel.send("❌ Debes estar en un canal de voz.")
                     return
 
                 if guild_id in voice_clients and voice_clients[guild_id].is_connected():
-                    await message.channel.send("✅ Ya estoy en un canal de voz.")
+                    await message.channel.send("✅ Ya estoy aquí.")
                 else:
                     voice_client = await message.author.voice.channel.connect()
                     voice_clients[guild_id] = voice_client
                     await message.add_reaction("🔊")
-
             except Exception as e:
                 print(f"Error en ?join: {e}")
 
         # 👋 DISCONNECT / LEAVE
-        elif message.content.startswith("?disconnect") or message.content.startswith("?leave"):
+        elif content.startswith("?leave") or content.startswith("?disconnect"):
             try:
-                if guild_id in voice_clients and voice_clients[guild_id].is_connected():
+                if guild_id in voice_clients:
                     await voice_clients[guild_id].disconnect()
                     del voice_clients[guild_id]
                     await message.add_reaction("👋")
-                else:
-                    await message.channel.send("❌ No estoy en un canal de voz.")
             except Exception as e:
-                print(f"Error en disconnect: {e}")
+                print(f"Error en leave: {e}")
 
-        # ⏸️ PAUSE
-        elif message.content.startswith("?pa"):
-            try:
-                voice_clients[guild_id].pause()
-                await message.add_reaction("⏸️")
-            except Exception as e:
-                print(e)
+        # ⏸️ PAUSE / RESUME / STOP / SKIP
+        elif content.startswith("?pa"):
+            voice_clients[guild_id].pause()
+            await message.add_reaction("⏸️")
 
-        # ▶️ RESUME
-        elif message.content.startswith("?r"):
-            try:
-                voice_clients[guild_id].resume()
-                await message.add_reaction("▶️")
-            except Exception as e:
-                print(e)
+        elif content.startswith("?r"):
+            voice_clients[guild_id].resume()
+            await message.add_reaction("▶️")
 
-        # ⏹️ STOP + SALIR
-        elif message.content.startswith("?f"):
-            try:
-                queues[guild_id] = []
-                voice_clients[guild_id].stop()
-                await voice_clients[guild_id].disconnect()
-                await message.add_reaction("⏹️")
-            except Exception as e:
-                print(e)
+        elif content.startswith("?f"):
+            queues[guild_id] = []
+            voice_clients[guild_id].stop()
+            await voice_clients[guild_id].disconnect()
+            await message.add_reaction("⏹️")
 
-        # ⏭️ SKIP
-        elif message.content.startswith("?s"):
-            try:
-                voice_clients[guild_id].stop()
-                await play_next(guild_id)
-                await message.add_reaction("⏭️")
-            except Exception as e:
-                print(e)
-
-        # 🔊 VOLUMEN
-        elif message.content.startswith("?v"):
-            try:
-                level = message.content.split()[1].lower()
-                if level in volume_levels:
-                    current_volume = volume_levels[level]
-                    await message.channel.send(f"🔊 Volumen: {level}")
-                else:
-                    await message.channel.send("❌ Usa: low, mid o max.")
-            except Exception as e:
-                print(e)
-
-        # 📜 HISTORIAL
-        elif message.content.startswith("?historial"):
-            try:
-                songs = history.get(guild_id, [])
-                if songs:
-                    display = "\n".join([f"{i+1}. {s}" for i, s in enumerate(songs)])
-                    await message.channel.send(f"🎶 Historial:\n{display}")
-                else:
-                    await message.channel.send("❌ No hay historial.")
-            except Exception as e:
-                print(e)
-
-        # 🔁 REPLAY HISTORIAL
-        elif message.content.startswith("?replay historial"):
-            try:
-                songs = history.get(guild_id, [])
-                if songs:
-                    queues[guild_id].extend(songs)
-                    if not voice_clients[guild_id].is_playing():
-                        await play_next(guild_id)
-                    await message.channel.send("🔁 Reproduciendo historial.")
-                else:
-                    await message.channel.send("❌ No hay historial.")
-            except Exception as e:
-                print(e)
+        elif content.startswith("?s"):
+            voice_clients[guild_id].stop()
+            await message.add_reaction("⏭️")
 
     client.run(TOKEN)
