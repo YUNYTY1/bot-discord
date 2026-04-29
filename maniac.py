@@ -38,15 +38,17 @@ def run_bot():
         "no_color": True,
         "extract_flat": False,
         "wait_for_video": (5, 30),
-        # Este User-Agent simula un navegador real para evitar el error de "Sign in to confirm you're not a bot"
         "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
     ytdl = yt_dlp.YoutubeDL(yt_dl_options)
 
+    # --- MEJORA DE FFMPEG PARA ESTABILIDAD ---
     def get_ffmpeg_options(volume):
         return {
+            # Estas opciones fuerzan a FFmpeg a reconectar si el flujo de YouTube parpadea
             'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
-            'options': f'-vn -filter:a "volume={volume}"'
+            # Añadimos parámetros para evitar que el proceso se cierre inesperadamente
+            'options': f'-vn -filter:a "volume={volume}" -dn -sn -ignore_unknown'
         }
 
     async def play_next(guild_id):
@@ -56,7 +58,7 @@ def run_bot():
         url = queues[guild_id].pop(0)
 
         try:
-            # Ejecutamos la extracción en un hilo separado para no bloquear el bot
+            # Extracción de info
             data = await asyncio.get_event_loop().run_in_executor(
                 None, lambda: ytdl.extract_info(url, download=False)
             )
@@ -70,7 +72,13 @@ def run_bot():
                 history[guild_id] = []
             history[guild_id].append(url)
 
-            player = discord.FFmpegPCMAudio(song, **get_ffmpeg_options(current_volume))
+            # --- CREACIÓN DEL PLAYER CON RUTA EXPLÍCITA ---
+            # 'executable="ffmpeg"' le dice al bot que use el comando del sistema instalado por Nixpacks
+            player = discord.FFmpegPCMAudio(
+                song, 
+                executable="ffmpeg", 
+                **get_ffmpeg_options(current_volume)
+            )
 
             def after_playing(error):
                 if error:
@@ -126,7 +134,6 @@ def run_bot():
                 if "youtube.com" in query or "youtu.be" in query:
                     url = query
                 else:
-                    # Búsqueda directa en YouTube
                     search_data = await asyncio.get_event_loop().run_in_executor(
                         None, lambda: ytdl.extract_info(f"ytsearch:{query}", download=False)
                     )
@@ -141,7 +148,7 @@ def run_bot():
 
             except Exception as e:
                 print(f"Error en ?p: {e}")
-                await message.channel.send("❌ Hubo un error al buscar la canción. YouTube podría estar bloqueando la petición.")
+                await message.channel.send("❌ Error al procesar audio. Reintentando...")
 
         # 🔊 JOIN
         elif content.startswith("?join"):
@@ -159,7 +166,7 @@ def run_bot():
             except Exception as e:
                 print(f"Error en ?join: {e}")
 
-        # 👋 DISCONNECT / LEAVE
+        # 👋 DISCONNECT
         elif content.startswith("?leave") or content.startswith("?disconnect"):
             try:
                 if guild_id in voice_clients:
@@ -169,7 +176,7 @@ def run_bot():
             except Exception as e:
                 print(f"Error en leave: {e}")
 
-        # ⏸️ PAUSE / RESUME / STOP / SKIP
+        # ⏸️ CONTROLES
         elif content.startswith("?pa"):
             if guild_id in voice_clients:
                 voice_clients[guild_id].pause()
